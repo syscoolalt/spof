@@ -30,7 +30,7 @@ local function getSpoofUsername() return tostring(getSetting("SpoofUsername", "R
 local function getSpoofDisplayName() return tostring(getSetting("SpoofDisplayName", "OfficialRoblox")) end
 
 -- ==========================================
--- 1. ROBUST CLIENT-SIDE CHARACTER MORPH
+-- 1. CLIENT-SIDE AVATAR MORPH (HEADLESS FIX)
 -- ==========================================
 local function swapAvatarLocally()
 	local character = localPlayer.Character
@@ -57,6 +57,8 @@ local function swapAvatarLocally()
 	if head then
 		local face = head:FindFirstChild("face") or head:FindFirstChildOfClass("Decal")
 		if face then face:Destroy() end
+		-- Reset head scale/transparency just in case previous morph made it invisible
+		head.Transparency = 0
 	end
 	
 	-- Copy basic character features (Clothing, Colors, T-Shirts)
@@ -66,12 +68,44 @@ local function swapAvatarLocally()
 		end
 	end
 	
-	-- Apply head visual textures (Face decal / dynamic head elements)
+	-- Detect if the target has a "Headless" build
 	local targetHead = targetModel:FindFirstChild("Head")
-	if targetHead and head then
-		local targetFace = targetHead:FindFirstChild("face") or targetHead:FindFirstChildOfClass("Decal")
-		if targetFace then
-			targetFace:Clone().Parent = head
+	local isTargetHeadless = false
+	
+	if targetHead then
+		-- Target is headless if their head is transparent, has no face, or has 0 size
+		if targetHead.Transparency >= 0.95 or not targetHead:FindFirstChildOfClass("Decal") then
+			local headMesh = targetHead:FindFirstChildOfClass("SpecialMesh")
+			if headMesh and (headMesh.Scale.X == 0 or headMesh.MeshId == "" or headMesh.MeshId == "rbxassetid://134079802") then
+				isTargetHeadless = true
+			end
+		end
+	else
+		isTargetHeadless = true
+	end
+	
+	-- Apply Headless state locally if needed
+	if isTargetHeadless and head then
+		head.Transparency = 1
+		local face = head:FindFirstChild("face") or head:FindFirstChildOfClass("Decal")
+		if face then face:Destroy() end
+		
+		-- Shrink head scale/mesh if present
+		local headMesh = head:FindFirstChildOfClass("SpecialMesh") or Instance.new("SpecialMesh", head)
+		headMesh.Scale = Vector3.new(0, 0, 0)
+	else
+		-- Restore normal head texture
+		if targetHead and head then
+			local targetFace = targetHead:FindFirstChild("face") or targetHead:FindFirstChildOfClass("Decal")
+			if targetFace then
+				targetFace:Clone().Parent = head
+			end
+			local headMesh = head:FindFirstChildOfClass("SpecialMesh")
+			local targetMesh = targetHead:FindFirstChildOfClass("SpecialMesh")
+			if headMesh and targetMesh then
+				headMesh.MeshId = targetMesh.MeshId
+				headMesh.Scale = targetMesh.Scale
+			end
 		end
 	end
 	
@@ -91,7 +125,7 @@ local function swapAvatarLocally()
 		local charAttachment = nil
 		
 		if accAttachment then
-			-- Scan character bones/parts for matching attachment point names
+			-- Scan character parts for matching attachment point names
 			for _, part in ipairs(character:GetChildren()) do
 				if part:IsA("BasePart") then
 					local found = part:FindFirstChild(accAttachment.Name)
@@ -103,7 +137,7 @@ local function swapAvatarLocally()
 			end
 		end
 		
-		-- Fail-safe default placement: Attach directly to Head if matching attachments are absent
+		-- Handle placement coordinates fallback
 		local attachPart = charAttachment and charAttachment.Parent or character:FindFirstChild("Head")
 		if attachPart then
 			handle.CanCollide = false
@@ -123,7 +157,7 @@ local function swapAvatarLocally()
 				weld.C0 = accAttachment.CFrame
 				weld.C1 = charAttachment.CFrame
 			else
-				weld.C0 = CFrame.new(0, 0, 0)
+				weld.C0 = CFrame.new(0, 0.6, 0) -- default hair offset if no attachments match
 				weld.C1 = CFrame.new(0, 0, 0)
 			end
 			weld.Parent = handle
@@ -139,7 +173,7 @@ local function swapAvatarLocally()
 	end
 	
 	targetModel:Destroy()
-	print("[Daemon] Local character morphed successfully with advanced accessories.")
+	print("[Daemon] Local character morphed successfully (Headless support configured).")
 end
 
 -- ==========================================
