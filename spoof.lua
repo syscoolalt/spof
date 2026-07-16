@@ -28,9 +28,13 @@ end
 local function getTargetId() return tonumber(getSetting("SpoofTargetId", 2611776)) end
 local function getSpoofUsername() return tostring(getSetting("SpoofUsername", "Roblox")) end
 local function getSpoofDisplayName() return tostring(getSetting("SpoofDisplayName", "OfficialRoblox")) end
+local function isHeadlessEnabled() 
+	local val = getSetting("Headless", false)
+	return (val == true)
+end
 
 -- ==========================================
--- 1. CLIENT-SIDE AVATAR MORPH (HEADLESS FIX)
+-- 1. CLIENT-SIDE AVATAR MORPH
 -- ==========================================
 local function swapAvatarLocally()
 	local character = localPlayer.Character
@@ -68,33 +72,33 @@ local function swapAvatarLocally()
 		end
 	end
 	
-	-- Detect if the target has a "Headless" build
+	-- Determine Headless status
 	local targetHead = targetModel:FindFirstChild("Head")
-	local isTargetHeadless = false
+	local makeHeadless = isHeadlessEnabled()
 	
-	if targetHead then
-		-- Target is headless if their head is transparent, has no face, or has 0 size
+	-- Auto-detect if target user is headless even if getgenv().Headless is false
+	if not makeHeadless and targetHead then
 		if targetHead.Transparency >= 0.95 or not targetHead:FindFirstChildOfClass("Decal") then
 			local headMesh = targetHead:FindFirstChildOfClass("SpecialMesh")
 			if headMesh and (headMesh.Scale.X == 0 or headMesh.MeshId == "" or headMesh.MeshId == "rbxassetid://134079802") then
-				isTargetHeadless = true
+				makeHeadless = true
 			end
 		end
-	else
-		isTargetHeadless = true
+	elseif not makeHeadless and not targetHead then
+		makeHeadless = true
 	end
 	
-	-- Apply Headless state locally if needed
-	if isTargetHeadless and head then
+	-- Apply Headless formatting locally
+	if makeHeadless and head then
 		head.Transparency = 1
 		local face = head:FindFirstChild("face") or head:FindFirstChildOfClass("Decal")
 		if face then face:Destroy() end
 		
-		-- Shrink head scale/mesh if present
+		-- Shrink head mesh scale to zero
 		local headMesh = head:FindFirstChildOfClass("SpecialMesh") or Instance.new("SpecialMesh", head)
 		headMesh.Scale = Vector3.new(0, 0, 0)
 	else
-		-- Restore normal head texture
+		-- Restore normal head mesh & face texture
 		if targetHead and head then
 			local targetFace = targetHead:FindFirstChild("face") or targetHead:FindFirstChildOfClass("Decal")
 			if targetFace then
@@ -114,7 +118,7 @@ local function swapAvatarLocally()
 		local handle = accessory:FindFirstChild("Handle")
 		if not handle or not handle:IsA("BasePart") then return end
 		
-		-- Clean existing joint welds inside the asset handle
+		-- Clean existing joints inside the asset handle
 		for _, v in ipairs(handle:GetChildren()) do
 			if v:IsA("Weld") or v:IsA("ManualWeld") or v:IsA("WeldConstraint") then
 				v:Destroy()
@@ -137,7 +141,7 @@ local function swapAvatarLocally()
 			end
 		end
 		
-		-- Handle placement coordinates fallback
+		-- Align coordinates
 		local attachPart = charAttachment and charAttachment.Parent or character:FindFirstChild("Head")
 		if attachPart then
 			handle.CanCollide = false
@@ -157,7 +161,7 @@ local function swapAvatarLocally()
 				weld.C0 = accAttachment.CFrame
 				weld.C1 = charAttachment.CFrame
 			else
-				weld.C0 = CFrame.new(0, 0.6, 0) -- default hair offset if no attachments match
+				weld.C0 = CFrame.new(0, 0.6, 0) -- default hair offset if no attachment was matched
 				weld.C1 = CFrame.new(0, 0, 0)
 			end
 			weld.Parent = handle
@@ -173,7 +177,7 @@ local function swapAvatarLocally()
 	end
 	
 	targetModel:Destroy()
-	print("[Daemon] Local character morphed successfully (Headless support configured).")
+	print("[Daemon] Local character morphed successfully.")
 end
 
 -- ==========================================
