@@ -181,29 +181,58 @@ local function replaceCoreElements()
 	print("[Daemon] Core UI listeners mounted.")
 end
 
--- ==========================================
+--- ==========================================
 -- 3. METATABLE HOOKING (INSPECT SPOOFER)
 -- ==========================================
 local rawMetatable = getrawmetatable and getrawmetatable(game)
 if rawMetatable and makewriteable then
 	makewriteable(rawMetatable)
-	local oldNamecall = rawMetatable.__namecall
 	
-	rawMetatable.__namecall = newcclosure(function(self, ...)
+	local oldNamecall
+	local oldIndex
+	
+	-- Hook __namecall (e.g., game:GetService("GuiService"):InspectPlayerFromUserId(...))
+	oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
 		local method = getnamecallmethod()
+		local args = {...}
+		
 		if self == GuiService and (method == "InspectPlayerFromUserId" or method == "InspectPlayerFromHumanoidDescription") then
-			local args = {...}
 			local targetId = getTargetId()
+			local realUserId = localPlayer.UserId
 			
-			if args[1] == localPlayer.UserId then
-				return oldNamecall(self, targetId, unpack(args, 2))
+			-- If the first argument is our real UserId, swap it with the target ID
+			if args[1] == realUserId then
+				args[1] = targetId
+				return oldNamecall(self, unpack(args))
 			end
 		end
+		
 		return oldNamecall(self, ...)
-	end)
-	print("[Daemon] Engine metatable hooked.")
+	end))
+	
+	-- Hook __index (e.g., GuiService.InspectPlayerFromUserId)
+	oldIndex = hookmetamethod(game, "__index", newcclosure(function(self, key)
+		if self == GuiService and (key == "InspectPlayerFromUserId" or key == "InspectPlayerFromHumanoidDescription") then
+			return newcclosure(function(service, ...)
+				local args = {...}
+				local targetId = getTargetId()
+				local realUserId = localPlayer.UserId
+				
+				if args[1] == realUserId then
+					args[1] = targetId
+				end
+				
+				-- Call the original method using the original index behavior
+				return oldIndex(service, key)(service, unpack(args))
+			end)
+		end
+		
+		return oldIndex(self, key)
+	end))
+	
+	print("[Daemon] Engine metatables securely hooked.")
 else
-	warn("[Daemon] Metatable hooking unsupported on this executor.")
+	warn("[Daemon] Metatable hooking unsupported on this environment.")
 end
 
 -- ==========================================
