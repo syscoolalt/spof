@@ -30,7 +30,7 @@ local function getSpoofUsername() return tostring(getSetting("SpoofUsername", "R
 local function getSpoofDisplayName() return tostring(getSetting("SpoofDisplayName", "OfficialRoblox")) end
 
 -- ==========================================
--- 1. CLIENT-SIDE AVATAR MORPH
+-- 1. ROBUST CLIENT-SIDE CHARACTER MORPH
 -- ==========================================
 local function swapAvatarLocally()
 	local character = localPlayer.Character
@@ -46,49 +46,86 @@ local function swapAvatarLocally()
 		return 
 	end
 	
-	-- Strip current accessories and clothes
+	-- Strip current accessories, clothes, body colors, and face elements
 	for _, child in ipairs(character:GetChildren()) do
 		if child:IsA("Accessory") or child:IsA("Clothing") or child:IsA("ShirtGraphic") or child:IsA("BodyColors") then
 			child:Destroy()
 		end
 	end
 	
-	-- Apply clothes and skin textures
+	local head = character:FindFirstChild("Head")
+	if head then
+		local face = head:FindFirstChild("face") or head:FindFirstChildOfClass("Decal")
+		if face then face:Destroy() end
+	end
+	
+	-- Copy basic character features (Clothing, Colors, T-Shirts)
 	for _, child in ipairs(targetModel:GetChildren()) do
 		if child:IsA("Clothing") or child:IsA("ShirtGraphic") or child:IsA("BodyColors") then
 			child:Clone().Parent = character
 		end
 	end
 	
-	-- Attach accessories manually using rigid welds
+	-- Apply head visual textures (Face decal / dynamic head elements)
+	local targetHead = targetModel:FindFirstChild("Head")
+	if targetHead and head then
+		local targetFace = targetHead:FindFirstChild("face") or targetHead:FindFirstChildOfClass("Decal")
+		if targetFace then
+			targetFace:Clone().Parent = head
+		end
+	end
+	
+	-- Advanced Accessory Attachment Engine
 	local function weldAccessory(accessory)
 		local handle = accessory:FindFirstChild("Handle")
 		if not handle or not handle:IsA("BasePart") then return end
-		local accAttachment = handle:FindFirstChildOfClass("Attachment")
-		if not accAttachment then return end
 		
+		-- Clean existing joint welds inside the asset handle
+		for _, v in ipairs(handle:GetChildren()) do
+			if v:IsA("Weld") or v:IsA("ManualWeld") or v:IsA("WeldConstraint") then
+				v:Destroy()
+			end
+		end
+		
+		local accAttachment = handle:FindFirstChildOfClass("Attachment")
 		local charAttachment = nil
-		for _, part in ipairs(character:GetChildren()) do
-			if part:IsA("BasePart") then
-				local found = part:FindFirstChild(accAttachment.Name)
-				if found and found:IsA("Attachment") then
-					charAttachment = found
-					break
+		
+		if accAttachment then
+			-- Scan character bones/parts for matching attachment point names
+			for _, part in ipairs(character:GetChildren()) do
+				if part:IsA("BasePart") then
+					local found = part:FindFirstChild(accAttachment.Name)
+					if found and found:IsA("Attachment") then
+						charAttachment = found
+						break
+					end
 				end
 			end
 		end
 		
-		if charAttachment then
+		-- Fail-safe default placement: Attach directly to Head if matching attachments are absent
+		local attachPart = charAttachment and charAttachment.Parent or character:FindFirstChild("Head")
+		if attachPart then
 			handle.CanCollide = false
 			handle.Anchored = false
-			handle.CFrame = charAttachment.WorldCFrame * accAttachment.CFrame:Inverse()
+			
+			if charAttachment and accAttachment then
+				handle.CFrame = charAttachment.WorldCFrame * accAttachment.CFrame:Inverse()
+			else
+				handle.CFrame = attachPart.CFrame
+			end
 			
 			local weld = Instance.new("Weld")
 			weld.Name = "AccessoryWeld"
 			weld.Part0 = handle
-			weld.Part1 = charAttachment.Parent
-			weld.C0 = accAttachment.CFrame
-			weld.C1 = charAttachment.CFrame
+			weld.Part1 = attachPart
+			if charAttachment and accAttachment then
+				weld.C0 = accAttachment.CFrame
+				weld.C1 = charAttachment.CFrame
+			else
+				weld.C0 = CFrame.new(0, 0, 0)
+				weld.C1 = CFrame.new(0, 0, 0)
+			end
 			weld.Parent = handle
 		end
 	end
@@ -102,7 +139,7 @@ local function swapAvatarLocally()
 	end
 	
 	targetModel:Destroy()
-	print("[Daemon] Local character morphed successfully.")
+	print("[Daemon] Local character morphed successfully with advanced accessories.")
 end
 
 -- ==========================================
@@ -181,58 +218,46 @@ local function replaceCoreElements()
 	print("[Daemon] Core UI listeners mounted.")
 end
 
---- ==========================================
--- 3. METATABLE HOOKING (INSPECT SPOOFER)
+-- ==========================================
+-- 3. INTERCEPT INSPECT ENGINE (METATABLE + HOOK)
 -- ==========================================
 local rawMetatable = getrawmetatable and getrawmetatable(game)
 if rawMetatable and makewriteable then
 	makewriteable(rawMetatable)
+	local oldNamecall = rawMetatable.__namecall
+	local oldIndex = rawMetatable.__index
 	
-	local oldNamecall
-	local oldIndex
-	
-	-- Hook __namecall (e.g., game:GetService("GuiService"):InspectPlayerFromUserId(...))
-	oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
-		local method = getnamecallmethod()
-		local args = {...}
-		
-		if self == GuiService and (method == "InspectPlayerFromUserId" or method == "InspectPlayerFromHumanoidDescription") then
-			local targetId = getTargetId()
-			local realUserId = localPlayer.UserId
-			
-			-- If the first argument is our real UserId, swap it with the target ID
-			if args[1] == realUserId then
-				args[1] = targetId
-				return oldNamecall(self, unpack(args))
+	-- Intercept system indexing requests for local user properties
+	rawMetatable.__index = newcclosure(function(self, key)
+		if not checkcaller() and self == localPlayer then
+			if key == "UserId" then
+				return getTargetId()
+			elseif key == "Name" then
+				return getSpoofUsername()
+			elseif key == "DisplayName" then
+				return getSpoofDisplayName()
 			end
 		end
-		
-		return oldNamecall(self, ...)
-	end))
-	
-	-- Hook __index (e.g., GuiService.InspectPlayerFromUserId)
-	oldIndex = hookmetamethod(game, "__index", newcclosure(function(self, key)
-		if self == GuiService and (key == "InspectPlayerFromUserId" or key == "InspectPlayerFromHumanoidDescription") then
-			return newcclosure(function(service, ...)
-				local args = {...}
-				local targetId = getTargetId()
-				local realUserId = localPlayer.UserId
-				
-				if args[1] == realUserId then
-					args[1] = targetId
-				end
-				
-				-- Call the original method using the original index behavior
-				return oldIndex(service, key)(service, unpack(args))
-			end)
-		end
-		
 		return oldIndex(self, key)
-	end))
+	end)
 	
-	print("[Daemon] Engine metatables securely hooked.")
+	-- Intercept system commands (Inspect Requests)
+	rawMetatable.__namecall = newcclosure(function(self, ...)
+		local method = getnamecallmethod()
+		if self == GuiService and (method == "InspectPlayerFromUserId" or method == "InspectPlayerFromHumanoidDescription") then
+			local args = {...}
+			local targetId = getTargetId()
+			
+			if args[1] == localPlayer.UserId or args[1] == targetId then
+				-- Detour Inspect menu to query target asset configurations directly
+				return oldNamecall(self, targetId, unpack(args, 2))
+			end
+		end
+		return oldNamecall(self, ...)
+	end)
+	print("[Daemon] Engine metatable hooked for Inspect intercepts.")
 else
-	warn("[Daemon] Metatable hooking unsupported on this environment.")
+	warn("[Daemon] Metatable hooking unsupported on this executor.")
 end
 
 -- ==========================================
